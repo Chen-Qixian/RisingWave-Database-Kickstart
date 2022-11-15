@@ -1,0 +1,203 @@
+syntax = "proto3";
+
+package expr;
+
+import "data.proto";
+import "plan_common.proto";
+
+option optimize_for = SPEED;
+
+message ExprNode {
+  enum Type {
+    UNSPECIFIED = 0;
+    INPUT_REF = 1;
+    CONSTANT_VALUE = 2;
+    // arithmetics operators
+    ADD = 3;
+    SUBTRACT = 4;
+    MULTIPLY = 5;
+    DIVIDE = 6;
+    MODULUS = 7;
+    // comparison operators
+    EQUAL = 8;
+    NOT_EQUAL = 9;
+    LESS_THAN = 10;
+    LESS_THAN_OR_EQUAL = 11;
+    GREATER_THAN = 12;
+    GREATER_THAN_OR_EQUAL = 13;
+    // logical operators
+    AND = 21;
+    OR = 22;
+    NOT = 23;
+    IN = 24;
+    // bitwise operators
+    BITWISE_AND = 31;
+    BITWISE_OR = 32;
+    BITWISE_XOR = 33;
+    BITWISE_NOT = 34;
+    BITWISE_SHIFT_LEFT = 35;
+    BITWISE_SHIFT_RIGHT = 36;
+    // date functions
+    EXTRACT = 101;
+    TUMBLE_START = 103;
+    TO_TIMESTAMP = 104;
+    AT_TIME_ZONE = 105;
+    // other functions
+    CAST = 201;
+    SUBSTR = 202;
+    LENGTH = 203;
+    LIKE = 204;
+    UPPER = 205;
+    LOWER = 206;
+    TRIM = 207;
+    REPLACE = 208;
+    POSITION = 209;
+    LTRIM = 210;
+    RTRIM = 211;
+    CASE = 212;
+    // ROUND(numeric, integer) -> numeric
+    ROUND_DIGIT = 213;
+    // ROUND(numeric) -> numeric
+    // ROUND(double precision) -> double precision
+    ROUND = 214;
+    ASCII = 215;
+    TRANSLATE = 216;
+    COALESCE = 217;
+    CONCAT_WS = 218;
+    ABS = 219;
+    SPLIT_PART = 220;
+    CEIL = 221;
+    FLOOR = 222;
+    TO_CHAR = 223;
+    MD5 = 224;
+    CHAR_LENGTH = 225;
+    REPEAT = 226;
+    CONCAT_OP = 227;
+    // BOOL_OUT is different from CAST-bool-to-varchar in PostgreSQL.
+    BOOL_OUT = 228;
+    OCTET_LENGTH = 229;
+    BIT_LENGTH = 230;
+    OVERLAY = 231;
+    REGEXP_MATCH = 232;
+
+    // Boolean comparison
+    IS_TRUE = 301;
+    IS_NOT_TRUE = 302;
+    IS_FALSE = 303;
+    IS_NOT_FALSE = 304;
+    IS_NULL = 305;
+    IS_NOT_NULL = 306;
+    IS_DISTINCT_FROM = 307;
+    IS_NOT_DISTINCT_FROM = 308;
+    // Unary operators
+    NEG = 401;
+    // Nested selection operators
+    FIELD = 501;
+    // Array expression.
+    ARRAY = 521;
+    ARRAY_ACCESS = 522;
+    ROW = 523;
+    // Array functions
+    ARRAY_CAT = 531;
+    ARRAY_APPEND = 532;
+    ARRAY_PREPEND = 533;
+    // Search operator and Search ARGument
+    SEARCH = 998;
+    SARG = 999;
+    // Internal functions
+    VNODE = 1101;
+  }
+  Type expr_type = 1;
+  data.DataType return_type = 3;
+  oneof rex_node {
+    InputRefExpr input_ref = 4;
+    data.Datum constant = 5;
+    FunctionCall func_call = 6;
+  }
+}
+
+message TableFunction {
+  enum Type {
+    UNSPECIFIED = 0;
+    GENERATE = 1;
+    UNNEST = 2;
+    REGEXP_MATCHES = 3;
+  }
+  Type function_type = 1;
+  repeated expr.ExprNode args = 2;
+  data.DataType return_type = 3;
+}
+
+message InputRefExpr {
+  int32 column_idx = 1;
+}
+
+// The items which can occur in the select list of `ProjectSet` operator.
+//
+// When there are table functions in the SQL query `SELECT ...`, it will be planned as `ProjectSet`.
+// Otherwise it will be planned as `Project`.
+//
+// # Examples
+//
+// ```sql
+// # Project
+// select 1;
+//
+// # ProjectSet
+// select unnest(array[1,2,3]);
+//
+// # ProjectSet (table function & usual expression)
+// select unnest(array[1,2,3]), 1;
+//
+// # ProjectSet (multiple table functions)
+// select unnest(array[1,2,3]), unnest(array[4,5]);
+//
+// # ProjectSet over ProjectSet (table function as parameters of table function)
+// select unnest(regexp_matches(v1, 'a(\d)c(\d)', 'g')) from t;
+//
+// # Project over ProjectSet (table function as parameters of usual function)
+// select unnest(regexp_matches(v1, 'a(\d)c(\d)', 'g')) from t;
+// ```
+message ProjectSetSelectItem {
+  oneof select_item {
+    expr.ExprNode expr = 1;
+    expr.TableFunction table_function = 2;
+  }
+}
+
+message FunctionCall {
+  repeated ExprNode children = 1;
+}
+
+// Aggregate Function Calls for Aggregation
+message AggCall {
+  enum Type {
+    UNSPECIFIED = 0;
+    SUM = 1;
+    MIN = 2;
+    MAX = 3;
+    COUNT = 4;
+    AVG = 5;
+    STRING_AGG = 6;
+    APPROX_COUNT_DISTINCT = 7;
+    ARRAY_AGG = 8;
+    FIRST_VALUE = 9;
+    SUM0 = 10;
+  }
+  message Arg {
+    InputRefExpr input = 1;
+    data.DataType type = 2;
+  }
+  Type type = 1;
+  repeated Arg args = 2;
+  data.DataType return_type = 3;
+  bool distinct = 4;
+  message OrderByField {
+    InputRefExpr input = 1;
+    data.DataType type = 2;
+    plan_common.OrderType direction = 3;
+    bool nulls_first = 4;
+  }
+  repeated OrderByField order_by_fields = 5;
+  ExprNode filter = 6;
+}

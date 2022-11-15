@@ -1,0 +1,56 @@
+[package]
+name = "risingwave_cmd"
+version = "0.2.0-alpha"
+edition = "2021"
+
+[features]
+static-link = ["workspace-config/enable-static-link"]
+static-log-level = ["workspace-config/enable-static-log-level"]
+
+[dependencies]
+anyhow = "1"
+clap = { version = "3", features = ["derive"] }
+global_stats_alloc = { path = "../utils/global_stats_alloc" }
+log = { version = "0.4" }
+risingwave_compaction_test = { path = "../tests/compaction_test" }
+risingwave_compactor = { path = "../storage/compactor" }
+risingwave_compute = { path = "../compute" }
+risingwave_ctl = { path = "../ctl" }
+risingwave_frontend = { path = "../frontend" }
+risingwave_meta = { path = "../meta" }
+risingwave_rt = { path = "../utils/runtime" }
+stats_alloc = "0.1"
+tikv-jemallocator = { version = "0.5", features = ["profiling", "stats"] }
+tokio = { version = "0.2", package = "madsim-tokio", features = [
+    "rt",
+    "rt-multi-thread",
+    "sync",
+    "macros",
+    "time",
+    "signal",
+    "fs",
+    "tracing",
+] }
+tracing = { version = "0.1" }
+workspace-config = { path = "../utils/workspace-config", optional = true }
+workspace-hack = { version = "0.2.0-alpha", path = "../workspace-hack" }
+
+[[bin]]
+name = "frontend"
+path = "src/bin/frontend_node.rs"
+
+[[bin]]
+name = "meta-node"
+path = "src/bin/meta_node.rs"
+
+[[bin]]
+name = "compute-node"
+path = "src/bin/compute_node.rs"
+
+[[bin]]
+name = "compactor"
+path = "src/bin/compactor.rs"
+
+[[bin]]
+name = "risectl"
+path = "src/bin/ctl.rs"

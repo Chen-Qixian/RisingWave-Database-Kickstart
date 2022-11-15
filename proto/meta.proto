@@ -1,0 +1,283 @@
+syntax = "proto3";
+
+package meta;
+
+import "catalog.proto";
+import "common.proto";
+import "hummock.proto";
+import "source.proto";
+import "stream_plan.proto";
+import "user.proto";
+
+option optimize_for = SPEED;
+
+message HeartbeatRequest {
+  message ExtraInfo {
+    oneof info {
+      uint64 hummock_gc_watermark = 1;
+    }
+  }
+  uint32 node_id = 1;
+  // Lightweight info piggybacked by heartbeat request.
+  repeated ExtraInfo info = 2;
+}
+
+message HeartbeatResponse {
+  common.Status status = 1;
+}
+
+service HeartbeatService {
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+}
+
+// Fragments of a Streaming Job
+message TableFragments {
+  // The state of the fragments of this table
+  enum State {
+    UNSPECIFIED = 0;
+    // The streaming job is initial.
+    INITIAL = 1;
+    // The streaming job is creating.
+    CREATING = 2;
+    // The streaming job has been created.
+    CREATED = 3;
+  }
+  // Runtime information of an actor
+  message ActorStatus {
+    // Current state of actor
+    enum ActorState {
+      UNSPECIFIED = 0;
+      // Initial state after creation
+      INACTIVE = 1;
+      // Running normally
+      RUNNING = 2;
+    }
+    // Current on which parallel unit
+    common.ParallelUnit parallel_unit = 1;
+    // Current state
+    ActorState state = 2;
+  }
+  message Fragment {
+    enum FragmentDistributionType {
+      UNSPECIFIED = 0;
+      SINGLE = 1;
+      HASH = 2;
+    }
+    uint32 fragment_id = 1;
+    stream_plan.FragmentType fragment_type = 2;
+    FragmentDistributionType distribution_type = 3;
+    repeated stream_plan.StreamActor actors = 4;
+    // Vnode mapping (which should be set in upstream dispatcher) of the fragment.
+    // This field is always set to `Some`. For singleton, the parallel unit for all vnodes will be the same.
+    common.ParallelUnitMapping vnode_mapping = 5;
+    repeated uint32 state_table_ids = 6;
+    // Note that this can be derived backwards from the upstream actors of the Actor held by the Fragment,
+    // but in some scenarios (e.g. Scaling) it will lead to a lot of duplicate code,
+    // so we pre-generate and store it here, this member will only be initialized when creating the Fragment
+    // and modified when creating the mv-on-mv
+    repeated uint32 upstream_fragment_ids = 7;
+  }
+  uint32 table_id = 1;
+  State state = 2;
+  map<uint32, Fragment> fragments = 3;
+  map<uint32, ActorStatus> actor_status = 4;
+  map<uint32, source.ConnectorSplits> actor_splits = 5;
+}
+
+// TODO: remove this when dashboard refactored.
+message ActorLocation {
+  common.WorkerNode node = 1;
+  repeated stream_plan.StreamActor actors = 2;
+}
+
+message FlushRequest {
+  bool checkpoint = 1;
+}
+
+message FlushResponse {
+  common.Status status = 1;
+  hummock.HummockSnapshot snapshot = 2;
+}
+
+message ListTableFragmentsRequest {
+  repeated uint32 table_ids = 1;
+}
+
+message ListTableFragmentsResponse {
+  message ActorInfo {
+    uint32 id = 1;
+    stream_plan.StreamNode node = 2;
+    repeated stream_plan.Dispatcher dispatcher = 3;
+  }
+  message FragmentInfo {
+    uint32 id = 1;
+    repeated ActorInfo actors = 4;
+  }
+  message TableFragmentInfo {
+    repeated FragmentInfo fragments = 1;
+  }
+  map<uint32, TableFragmentInfo> table_fragments = 1;
+}
+
+service StreamManagerService {
+  rpc Flush(FlushRequest) returns (FlushResponse);
+  rpc ListTableFragments(ListTableFragmentsRequest) returns (ListTableFragmentsResponse);
+}
+
+// Below for cluster service.
+
+message AddWorkerNodeRequest {
+  common.WorkerType worker_type = 1;
+  common.HostAddress host = 2;
+  uint64 worker_node_parallelism = 3;
+}
+
+message AddWorkerNodeResponse {
+  common.Status status = 1;
+  common.WorkerNode node = 2;
+}
+
+message ActivateWorkerNodeRequest {
+  common.HostAddress host = 1;
+}
+
+message ActivateWorkerNodeResponse {
+  common.Status status = 1;
+}
+
+message DeleteWorkerNodeRequest {
+  common.HostAddress host = 1;
+}
+
+message DeleteWorkerNodeResponse {
+  common.Status status = 1;
+}
+
+message ListAllNodesRequest {
+  common.WorkerType worker_type = 1;
+  // Whether to include nodes still starting
+  bool include_starting_nodes = 2;
+}
+
+message ListAllNodesResponse {
+  common.Status status = 1;
+  repeated common.WorkerNode nodes = 2;
+}
+
+service ClusterService {
+  rpc AddWorkerNode(AddWorkerNodeRequest) returns (AddWorkerNodeResponse);
+  rpc ActivateWorkerNode(ActivateWorkerNodeRequest) returns (ActivateWorkerNodeResponse);
+  rpc DeleteWorkerNode(DeleteWorkerNodeRequest) returns (DeleteWorkerNodeResponse);
+  rpc ListAllNodes(ListAllNodesRequest) returns (ListAllNodesResponse);
+}
+
+enum SubscribeType {
+  UNSPECIFIED = 0;
+  FRONTEND = 1;
+  HUMMOCK = 2;
+  COMPACTOR = 3;
+}
+
+// Below for notification service.
+message SubscribeRequest {
+  SubscribeType subscribe_type = 1;
+  common.HostAddress host = 2;
+  uint32 worker_id = 3;
+}
+
+message MetaSnapshot {
+  repeated common.WorkerNode nodes = 1;
+  repeated catalog.Database databases = 2;
+  repeated catalog.Schema schemas = 3;
+  repeated catalog.Source sources = 4;
+  repeated catalog.Sink sinks = 5;
+  repeated catalog.Table tables = 6;
+  repeated catalog.Index indexes = 7;
+  repeated user.UserInfo users = 8;
+  hummock.HummockVersion hummock_version = 9;
+  repeated common.ParallelUnitMapping parallel_unit_mappings = 10;
+  hummock.HummockSnapshot hummock_snapshot = 11;
+  repeated hummock.CompactionGroup compaction_groups = 12;
+  repeated catalog.View views = 13;
+}
+
+message SubscribeResponse {
+  enum Operation {
+    UNSPECIFIED = 0;
+    ADD = 1;
+    DELETE = 2;
+    UPDATE = 3;
+    SNAPSHOT = 4;
+  }
+  common.Status status = 1;
+  Operation operation = 2;
+  uint64 version = 3;
+  oneof info {
+    common.WorkerNode node = 4;
+    catalog.Database database = 5;
+    catalog.Schema schema = 6;
+    catalog.Table table = 7;
+    catalog.Source source = 8;
+    catalog.Sink sink = 9;
+    catalog.Index index = 10;
+    user.UserInfo user = 11;
+    hummock.HummockSnapshot hummock_snapshot = 12;
+    common.ParallelUnitMapping parallel_unit_mapping = 13;
+    hummock.HummockVersionDeltas hummock_version_deltas = 14;
+    MetaSnapshot snapshot = 20;
+    catalog.View view = 21;
+  }
+}
+
+service NotificationService {
+  rpc Subscribe(SubscribeRequest) returns (stream SubscribeResponse);
+}
+
+message MetaLeaderInfo {
+  string node_address = 1;
+  uint64 lease_id = 2;
+}
+
+message MetaLeaseInfo {
+  MetaLeaderInfo leader = 1;
+  uint64 lease_register_time = 2;
+  uint64 lease_expire_time = 3;
+}
+
+message PauseRequest {}
+
+message PauseResponse {}
+
+message ResumeRequest {}
+
+message ResumeResponse {}
+
+message GetClusterInfoRequest {}
+
+message GetClusterInfoResponse {
+  repeated common.WorkerNode worker_nodes = 1;
+  repeated TableFragments table_fragments = 2;
+  map<uint32, source.ConnectorSplits> actor_splits = 3;
+  map<uint32, catalog.Source> source_infos = 4;
+}
+
+message RescheduleRequest {
+  message Reschedule {
+    repeated uint32 added_parallel_units = 1;
+    repeated uint32 removed_parallel_units = 2;
+  }
+  // reschedule plan for each fragment
+  map<uint32, Reschedule> reschedules = 1;
+}
+
+message RescheduleResponse {
+  bool success = 1;
+}
+
+service ScaleService {
+  // TODO(Kexiang): delete them when config change interface is finished
+  rpc Pause(PauseRequest) returns (PauseResponse);
+  rpc Resume(ResumeRequest) returns (ResumeResponse);
+  rpc GetClusterInfo(GetClusterInfoRequest) returns (GetClusterInfoResponse);
+  rpc Reschedule(RescheduleRequest) returns (RescheduleResponse);
+}

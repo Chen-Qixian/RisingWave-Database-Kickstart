@@ -1,0 +1,105 @@
+syntax = "proto3";
+
+package task_service;
+
+import "batch_plan.proto";
+import "common.proto";
+import "data.proto";
+import "stream_plan.proto";
+
+option optimize_for = SPEED;
+
+// Task is a running instance of Stage.
+message TaskId {
+  string query_id = 1;
+  uint32 stage_id = 2;
+  uint32 task_id = 3;
+}
+
+message TaskInfo {
+  enum TaskStatus {
+    // Note: Requirement of proto3: first enum must be 0.
+    UNSPECIFIED = 0;
+    PENDING = 2;
+    RUNNING = 3;
+    FINISHED = 6;
+    FAILED = 7;
+    ABORTED = 8;
+  }
+  batch_plan.TaskId task_id = 1;
+  TaskStatus task_status = 2;
+}
+
+message CreateTaskRequest {
+  batch_plan.TaskId task_id = 1;
+  batch_plan.PlanFragment plan = 2;
+  uint64 epoch = 3;
+}
+
+message AbortTaskRequest {
+  batch_plan.TaskId task_id = 1;
+}
+
+message AbortTaskResponse {
+  common.Status status = 1;
+}
+
+message GetTaskInfoRequest {
+  batch_plan.TaskId task_id = 1;
+}
+
+message TaskInfoResponse {
+  common.Status status = 1;
+  TaskInfo task_info = 2;
+}
+
+message GetDataResponse {
+  common.Status status = 1;
+  data.DataChunk record_batch = 2;
+}
+
+message ExecuteRequest {
+  batch_plan.TaskId task_id = 1;
+  batch_plan.PlanFragment plan = 2;
+  uint64 epoch = 3;
+}
+
+service TaskService {
+  rpc CreateTask(CreateTaskRequest) returns (stream TaskInfoResponse);
+  // Abort an already-died (self execution-failure, previous aborted, completed) task will still succeed.
+  rpc AbortTask(AbortTaskRequest) returns (AbortTaskResponse);
+  rpc Execute(ExecuteRequest) returns (stream GetDataResponse);
+}
+
+message GetDataRequest {
+  batch_plan.TaskOutputId task_output_id = 1;
+}
+
+message GetStreamRequest {
+  // The first message, which tells the upstream which channel this exchange stream is for.
+  message Get {
+    uint32 up_actor_id = 1;
+    uint32 down_actor_id = 2;
+    uint32 up_fragment_id = 3;
+    uint32 down_fragment_id = 4;
+  }
+  // The following messages, which adds the permits back to the upstream to achieve back-pressure.
+  message AddPermits {
+    uint32 permits = 1;
+  }
+  oneof value {
+    Get get = 1;
+    AddPermits add_permits = 2;
+  }
+}
+
+message GetStreamResponse {
+  stream_plan.StreamMessage message = 1;
+  // The number of permits acquired for this message, which should be sent back to the upstream with `AddPermits`.
+  uint32 permits = 2;
+}
+
+service ExchangeService {
+  rpc GetData(GetDataRequest) returns (stream GetDataResponse);
+  rpc GetStream(stream GetStreamRequest) returns (stream GetStreamResponse);
+}
